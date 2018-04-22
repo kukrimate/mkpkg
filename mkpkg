@@ -1,0 +1,164 @@
+#!/bin/bash
+
+error_trap()
+{
+	echo $TRAP_MSG 1>&2
+	exit 1
+}
+
+is_defined()
+{
+    declare -f -F $1 > /dev/null
+    return $?
+}
+
+# Check if we running as root
+if [ $UID -eq 0 ]; then
+	echo 'Never run mkpkg as root !!!' 1>&2
+	exit 1
+fi
+
+# Source config
+trap error_trap ERR
+TRAP_MSG="Syntax error in config file"
+source "/usr/local/etc/mkpkg.conf"
+
+# Init part
+TRAP_MSG="Something unexpected went wrong"
+
+# Use the current directory as a default
+DEF_DIR=$PWD
+
+DO_CLEANUP=0
+SRC_CLEANUP=0
+for arg in "$@"; do
+case $arg in
+	-d=*|--dir=*)
+	DEF_DIR=${arg#*=}
+	;;
+	-o=*|--out=*)
+	OUT_DIR=${arg#*=}
+	;;
+	-c|--cleanup)
+	DO_CLEANUP=1
+	;;
+	-n|--no-source)
+	SRC_CLEANUP=1
+	;;
+esac
+done
+
+# Use the pkgdir for output if nothing else is specified
+if [ -z "$OUT_DIR" ]; then
+	OUT_DIR=$DEF_DIR
+fi
+
+# Check for pkgdef file
+if [ ! -f "$DEF_DIR/pkgdef" ]; then
+	echo "pkgdef not found" 1>&2
+	exit 1
+fi
+
+# Create output directory
+if [ ! -d "$OUT_DIR" ]; then
+	mkdir -p "$OUT_DIR" ||
+	{
+		echo "Failed to create output directory" 1>&2
+		exit 1
+	}
+fi
+
+# Make the paths absolute
+DEF_DIR=$(readlink -e "$DEF_DIR")
+OUT_DIR=$(readlink -e "$OUT_DIR")
+
+# Source package definition
+PKGDEF_PATH="$DEF_DIR/pkgdef"
+TRAP_MSG="Syntax error in $PKGDEF_PATH"
+source $PKGDEF_PATH
+
+# Create source directory
+TRAP_MSG="Failed to create source directory"
+SRC_DIR="$OUT_DIR/src"
+mkdir -p $SRC_DIR
+
+# Download sources
+tput setaf 2; echo "[mkpkg] Downloading/copying sources"; tput sgr 0
+for src in $pkg_src; do
+	FILENAME="${src##*/}"
+	LOCAL_PATH="$OUT_DIR/$FILENAME"
+
+	# Download source
+	if [ ! -f $LOCAL_PATH ]; then
+		TRAP_MSG="Failed to download $FILENAME"
+		cd $OUT_DIR
+		wget $src
+	fi
+
+	# Extract it
+	if [[ $LOCAL_PATH =~ \.tar\..*$ ]]; then
+		TRAP_MSG="Failed to unpack $FILENAME"
+		cd $SRC_DIR
+		tar xf $LOCAL_PATH
+	fi
+
+	if [ $SRC_CLEANUP -eq 1 ]; then
+		TRAP_MSG="Failed to delete $FILENAME"
+		rm $LOCAL_PATH
+	fi
+done
+
+# Call prepare
+if is_defined prepare; then
+	tput setaf 2; echo "[mkpkg] Running prepare"; tput sgr 0
+
+	TRAP_MSG="$(tput setaf 1)Prepare failed$(tput sgr 0)"
+	prepare > /dev/null
+fi
+
+# Call build
+TRAP_MSG="Failed to create build directory"
+BUILD_DIR="$OUT_DIR/build"
+mkdir -p $BUILD_DIR
+cd $BUILD_DIR
+
+if is_defined build; then
+	tput setaf 2; echo "[mkpkg] Running build"; tput sgr 0
+
+	TRAP_MSG="$(tput setaf 1)Build failed$(tput sgr 0)"
+	build > /dev/null
+fi
+
+# Create an archive
+create_archive()
+{
+	# Set error message
+	TRAP_MSG="$(tput setaf 1)$1 failed$(tput sgr 0)"
+
+	archive_suffix=${1##*_}
+	tput setaf 2; echo "[mkpkg] reating archive: $archive_suffix"; tput sgr 0
+
+	# Create archive directory
+	ARCHIVE_DIR="$OUT_DIR/archive/$archive_suffix"
+	mkdir -p $ARCHIVE_DIR
+
+	# Run archive function
+	cd $BUILD_DIR
+	$1 > /dev/null
+
+	cd $ARCHIVE_DIR
+	tar czf "$OUT_DIR/$pkg_name-$pkg_ver-$archive_suffix.tgz" .
+}
+
+# Create archives
+OLDIFS=$IFS
+IFS=$'\n'
+for arc in $(declare -F | grep "package_.*"); do
+	create_archive "$(echo $arc | cut -d " " -f 3)"
+done
+IFS=$OLDIFS
+
+if [ $DO_CLEANUP -eq 1 ]; then
+	TRAP_MSG="Cleanup failed"
+	rm -rf "$OUT_DIR/archive" "$OUT_DIR/src" "$OUT_DIR/build"
+fi
