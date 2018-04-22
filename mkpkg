@@ -83,28 +83,29 @@ SRC_DIR="$OUT_DIR/src"
 mkdir -p $SRC_DIR
 
 # Download sources
-tput setaf 2; echo "[mkpkg] Downloading/copying sources"; tput sgr 0
+tput setaf 2; echo "[mkpkg] Preparing sources"; tput sgr 0
 for src in $pkg_src; do
 	FILENAME="${src##*/}"
-	LOCAL_PATH="$OUT_DIR/$FILENAME"
+	OUT_PATH="$OUT_DIR/$FILENAME"
 
-	# Download source
-	if [ ! -f $LOCAL_PATH ]; then
+	# Download online sources
+	if [ -f $OUT_PATH ]; then
+		# TODO: add hash check for file integrity
+		true
+	elif [[ $src =~ (^https|^http|^ftp):// ]]; then
 		TRAP_MSG="Failed to download $FILENAME"
-		cd $OUT_DIR
-		wget $src
+		wget -O $OUT_PATH $src
+	# Copy local sources
+	else
+		TRAP_MSG="Failed to copy $FILENAME"
+		cp $DEF_DIR/$src $OUT_DIR/$FILENAME
 	fi
 
 	# Extract it
-	if [[ $LOCAL_PATH =~ \.tar\..*$ ]]; then
+	if [[ $FILENAME =~ \.tar\..*$ ]]; then
 		TRAP_MSG="Failed to unpack $FILENAME"
 		cd $SRC_DIR
-		tar xf $LOCAL_PATH
-	fi
-
-	if [ $SRC_CLEANUP -eq 1 ]; then
-		TRAP_MSG="Failed to delete $FILENAME"
-		rm $LOCAL_PATH
+		tar xf $OUT_PATH
 	fi
 done
 
@@ -136,7 +137,7 @@ create_archive()
 	TRAP_MSG="$(tput setaf 1)$1 failed$(tput sgr 0)"
 
 	archive_suffix=${1##*_}
-	tput setaf 2; echo "[mkpkg] reating archive: $archive_suffix"; tput sgr 0
+	tput setaf 2; echo "[mkpkg] Creating archive: $archive_suffix"; tput sgr 0
 
 	# Create archive directory
 	ARCHIVE_DIR="$OUT_DIR/archive/$archive_suffix"
@@ -161,4 +162,11 @@ IFS=$OLDIFS
 if [ $DO_CLEANUP -eq 1 ]; then
 	TRAP_MSG="Cleanup failed"
 	rm -rf "$OUT_DIR/archive" "$OUT_DIR/src" "$OUT_DIR/build"
+fi
+
+if [ $SRC_CLEANUP -eq 1 ]; then
+	TRAP_MSG="Source cleanup failed"
+	for src in $pkg_src; do
+		rm $OUT_DIR/${src##*/}
+	done
 fi
