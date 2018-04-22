@@ -84,7 +84,8 @@ mkdir -p $SRC_DIR
 
 # Download sources
 tput setaf 2; echo "[mkpkg] Preparing sources"; tput sgr 0
-for src in $pkg_src; do
+
+for src in ${pkg_src[@]}; do
 	FILENAME="${src##*/}"
 	OUT_PATH="$OUT_DIR/$FILENAME"
 
@@ -166,7 +167,7 @@ fi
 
 if [ $SRC_CLEANUP -eq 1 ]; then
 	TRAP_MSG="Source cleanup failed"
-	for src in $pkg_src; do
+	for src in ${pkg_src[@]}; do
 		rm $OUT_DIR/${src##*/}
 	done
 fi
